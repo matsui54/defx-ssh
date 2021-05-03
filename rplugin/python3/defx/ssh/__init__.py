@@ -1,18 +1,64 @@
 from __future__ import annotations
 import typing
 from pathlib import PurePosixPath
+import subprocess
 import stat
 import re
+import shlex
 
 
 class SSHAttributes():
-    pass
+    def __init__(self):
+        self.st_mode = None
+        self.st_ino = None
+        self.st_dev = None
+        self.st_nlink = None
+        self.st_uid = None
+        self.st_gid = None
+        self.st_size = None
+        self.st_atime = None
+        self.st_mtime = None
+        self.st_ctime = None
+        self.filename: str = ''
+
+    @classmethod
+    def from_str(cls, sl):
+        attr = cls()
+        attr.st_mode = sl[0]
+        attr.st_ino = sl[1]
+        attr.st_dev = sl[2]
+        attr.st_nlink = sl[3]
+        attr.st_uid = sl[4]
+        attr.st_gid = sl[5]
+        attr.st_size = sl[6]
+        attr.st_atime = sl[7]
+        attr.st_mtime = sl[8]
+        attr.st_ctime = sl[9]
+        attr.filename = sl[10]
+        return attr
+
+
+class SSHClient:
+    def __init__(self):
+        self.username: str = None
+        self.hostname: str = None
+
+    def request(self, cmd: typing.List[str]):
+        cmd_base = ['ssh', '{}{}{}'.format(
+            self.username, '@' if self.username else '',
+            self.hostname)]
+        cmd_base.extend(cmd)
+        output = subprocess.run(cmd_base, stdout=subprocess.PIPE, shell=True)
+        return output.stdout.decode().strip().split('\n')
 
 
 class SSHPath(PurePosixPath):
-    def __new__(cls, path: str):
+    def __new__(cls, client: SSHClient, path: str,
+                stat: SSHAttributes = None):
         self = super().__new__(cls, path)
+        self.client: SSHClient = client
         self.path: str = path
+        self._stat = stat
         return self
 
     def __eq__(self, other):
@@ -52,19 +98,26 @@ class SSHPath(PurePosixPath):
         return stat.S_ISLNK(mode)
 
     def iterdir(self) -> typing.Iterable(SSHPath):
-        for f in self.client.listdir_attr(self.path):
-            yield self.joinpath(f.filename)
+        files = self.client.request(['ls -A {}'.format(str(self))])
+        files_quoted = [shlex.quote(str(self.joinpath(f))) for f in files]
+        stat_cmd = ['stat', "--format='%f %i %d %h %u %g %s %X %Y %Z %N'"]
+        stat_cmd.extend(files_quoted)
+        stat_str = self.client.request(stat_cmd)
+        for s in stat_str:
+            st = SSHAttributes.from_str(s)
+            yield SSHPath(self.client, st[10], st)
 
     def joinpath(self, name: str):
+        # use native?
         sep = '' if self.path == '/' else '/'
         new_path = self.path + sep + name
-        return SSHPath(self.client, new_path, stat)
+        return SSHPath(self.client, new_path)
 
     def mkdir(self, parents=False, exist_ok=False):
         # TODO: mkdir recursively
         self.client.mkdir(self.path)
 
-    @property
+    @ property
     def parent(self):
         if self.path == '/':
             return self
@@ -101,7 +154,10 @@ class SSHPath(PurePosixPath):
         if self._stat:
             return self._stat
         else:
-            return self.client.stat(self.path)
+            stat_cmd = ['stat', "--format='%f %i %d %h %u %g %s %X %Y %Z %N'",
+                        str(self)]
+            stat_str = self.client.request(stat_cmd)[0]
+            return SSHAttributes.from_str(stat_str)
 
     def touch(self, exist_ok=True):
         self.client.open(self.path, mode='x')

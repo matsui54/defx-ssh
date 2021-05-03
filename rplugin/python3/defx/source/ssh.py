@@ -1,16 +1,17 @@
-from paramiko import Transport, SFTPClient, RSAKey
 import re
 from pathlib import Path
 import site
 import typing
+from urllib.parse import urlparse
+
 from pynvim import Nvim
 
 from defx.util import error
 from defx.context import Context
 from defx.base.source import Base
-from ..ssh.ssh_path import SSHPath
 
 site.addsitedir(str(Path(__file__).parent.parent))
+from ssh import SSHPath, SSHClient  # noqa: E402
 
 
 class Source(Base):
@@ -18,32 +19,20 @@ class Source(Base):
         super().__init__(vim)
         self.name = 'ssh'
 
-        from kind.sftp import Kind
-        self.kind: Kind = Kind(self.vim)
+        self.client: SSHClient = SSHClient()
 
-        self.client: SFTPClient = None
-        self.username: str = ''
-        self.hostname: str = ''
-        self.path_head: str = ''
-
-        self.vars = {
-            'root': None,
-        }
+        from kind.ssh import Kind
+        self.kind: Kind = Kind(self.vim, self)
 
     def init_client(self, hostname, username) -> None:
-        key_path = self.vim.vars.get('defx_sftp#key_path',
-                                     self.vim.call('expand', '~/.ssh/id_rsa'))
-        transport = Transport((hostname))
-        rsa_private_key = RSAKey.from_private_key_file(key_path)
-        transport.connect(username=username, pkey=rsa_private_key)
-        self.client = SFTPClient.from_transport(transport)
+        pass
 
     def get_root_candidate(
             self, context: Context, path: Path
     ) -> typing.Dict[str, typing.Any]:
         self.vim.call('defx#util#print_message', str(path))
         path_str = self._parse_arg(str(path))
-        path = SFTPPath(self.client, path_str)
+        path = SSHPath(path_str)
         word = str(path)
         if word[-1:] != '/':
             word += '/'
@@ -60,7 +49,7 @@ class Source(Base):
             self, context: Context, path: Path
     ) -> typing.List[typing.Dict[str, typing.Any]]:
         path_str = self._parse_arg(str(path))
-        path = SFTPPath(self.client, path_str)
+        path = SSHPath(path_str)
 
         candidates = []
         for f in path.iterdir():
@@ -72,21 +61,9 @@ class Source(Base):
         return candidates
 
     def _parse_arg(self, path: str) -> str:
-        head, rmt_path = SFTPPath.parse_path(path)
-        if head is None:
-            return path
-        m = re.match('//(.+)@(.+)', head)  # include username?
-        if m:
-            username, hostname = m.groups()
-        else:
-            hostname = re.match('//(.+)', head).groups()[0]
-            username = ''
-        if (username != self.username or
-                hostname != self.hostname):
-            # TODO: error handling(cannot connect)
-            self.init_client(hostname, username)
-            self.username = username
-            self.hostname = hostname
-        if rmt_path == '':
-            rmt_path = '.'
-        return self.client.normalize(rmt_path)
+        parsed = urlparse(path)
+        if parsed.username:
+            self.client.username = parsed.username
+        if parsed.hostname:
+            self.client.hostname = parsed.hostname
+        return parsed.path
