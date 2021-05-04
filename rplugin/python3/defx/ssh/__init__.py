@@ -3,7 +3,6 @@ import typing
 from pathlib import PurePosixPath
 import subprocess
 import stat
-import re
 import shlex
 
 
@@ -22,8 +21,9 @@ class SSHAttributes():
         self.filename: str = ''
 
     @classmethod
-    def from_str(cls, sl):
+    def from_str(cls, st_str):
         attr = cls()
+        sl = shlex.split(st_str)
         attr.st_mode = sl[0]
         attr.st_ino = sl[1]
         attr.st_dev = sl[2]
@@ -48,7 +48,7 @@ class SSHClient:
             self.username, '@' if self.username else '',
             self.hostname)]
         cmd_base.extend(cmd)
-        output = subprocess.run(cmd_base, stdout=subprocess.PIPE, shell=True)
+        output = subprocess.run(cmd_base, stdout=subprocess.PIPE)
         return output.stdout.decode().strip().split('\n')
 
 
@@ -105,7 +105,7 @@ class SSHPath(PurePosixPath):
         stat_str = self.client.request(stat_cmd)
         for s in stat_str:
             st = SSHAttributes.from_str(s)
-            yield SSHPath(self.client, st[10], st)
+            yield SSHPath(self.client, st.filename, st)
 
     def joinpath(self, name: str):
         # use native?
@@ -164,3 +164,12 @@ class SSHPath(PurePosixPath):
 
     def unlink(self, missing_ok=False):
         self.client.unlink(self.path)
+
+
+if __name__ == '__main__':
+    client = SSHClient()
+    client.username = 'denjo'
+    client.hostname = 'localhost'
+    p = SSHPath(client, '/home/denjo/work/test')
+    for f in p.iterdir():
+        print(f, f.stat().st_mode)
