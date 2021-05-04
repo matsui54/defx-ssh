@@ -24,6 +24,10 @@ class Source(Base):
         from kind.ssh import Kind
         self.kind: Kind = Kind(self.vim, self)
 
+        self.vars = {
+            'root': None,
+        }
+
     def init_client(self, hostname, username) -> None:
         pass
 
@@ -32,7 +36,7 @@ class Source(Base):
     ) -> typing.Dict[str, typing.Any]:
         self.vim.call('defx#util#print_message', str(path))
         path_str = self._parse_arg(str(path))
-        path = SSHPath(path_str)
+        path = SSHPath(self.client, path_str)
         word = str(path)
         if word[-1:] != '/':
             word += '/'
@@ -49,7 +53,7 @@ class Source(Base):
             self, context: Context, path: Path
     ) -> typing.List[typing.Dict[str, typing.Any]]:
         path_str = self._parse_arg(str(path))
-        path = SSHPath(path_str)
+        path = SSHPath(self.client, path_str)
 
         candidates = []
         for f in path.iterdir():
